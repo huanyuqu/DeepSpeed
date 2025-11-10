@@ -182,6 +182,7 @@ class DeepSpeedZeroOptimizer_Stage3(ZeROOptimizer):
         log_trace_cache_warnings=False,
         enable_sanity_checks=False,
         cpuadam_cores_perc=0.8,
+        partition_params_backward=True,
     ):
         see_memory_usage("Stage 3 initialize beginning", force=True)
 
@@ -228,6 +229,9 @@ class DeepSpeedZeroOptimizer_Stage3(ZeROOptimizer):
         self.partial_offload = offload_ratio
         self.enable_sanity_checks = enable_sanity_checks
 
+        # If True: ZeRO-3, False: ZeRO-4
+        self.partition_params_backward = partition_params_backward
+
         self.create_zenflow_hooks()
         self._initialize_zenflow_stage3_prologue(module, zenflow_config)
 
@@ -260,8 +264,7 @@ class DeepSpeedZeroOptimizer_Stage3(ZeROOptimizer):
             zero_quantized_weights=zero_quantized_weights,
             zero_quantized_nontrainable_weights=zero_quantized_nontrainable_weights,
             zero_module_granularity_threshold=zero_module_granularity_threshold,
-            log_trace_cache_warnings=log_trace_cache_warnings,
-        )
+            log_trace_cache_warnings=log_trace_cache_warnings)
 
         self.persistent_parameters = self.parameter_offload.persistent_parameters
         self._configure_offloading(offload_optimizer_config, offload_param_config)
@@ -504,27 +507,11 @@ class DeepSpeedZeroOptimizer_Stage3(ZeROOptimizer):
             fn = getattr(zf_engine_stage3, name)
             setattr(self, name, partial(fn, self))
 
-    def initialize_ds_offload(
-        self,
-        module,
-        timers,
-        ds_config,
-        zenflow,
-        overlap_comm,
-        prefetch_bucket_size,
-        max_reuse_distance,
-        max_live_parameters,
-        param_persistence_threshold,
-        model_persistence_threshold,
-        dp_process_group,
-        offload_param_config,
-        mpu,
-        zero_param_parallel_group,
-        zero_quantized_weights,
-        zero_quantized_nontrainable_weights,
-        zero_module_granularity_threshold,
-        log_trace_cache_warnings,
-    ):
+    def initialize_ds_offload(self, module, timers, ds_config, zenflow, overlap_comm, prefetch_bucket_size,
+                              max_reuse_distance, max_live_parameters, param_persistence_threshold,
+                              model_persistence_threshold, dp_process_group, offload_param_config, mpu,
+                              zero_param_parallel_group, zero_quantized_weights, zero_quantized_nontrainable_weights,
+                              zero_module_granularity_threshold, log_trace_cache_warnings):
         return DeepSpeedZeRoOffload(module=module,
                                     timers=timers,
                                     ds_config=ds_config,
@@ -542,7 +529,8 @@ class DeepSpeedZeroOptimizer_Stage3(ZeROOptimizer):
                                     zero_quantized_weights=zero_quantized_weights,
                                     zero_quantized_nontrainable_weights=zero_quantized_nontrainable_weights,
                                     zero_module_granularity_threshold=zero_module_granularity_threshold,
-                                    log_trace_cache_warnings=log_trace_cache_warnings)
+                                    log_trace_cache_warnings=log_trace_cache_warnings,
+                                    partition_params_backward=self.partition_params_backward)
 
     def _get_trainable_parameter_groups(self):
         param_groups = []

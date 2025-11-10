@@ -108,6 +108,7 @@ class DeepSpeedZeRoOffload(object):
         zero_quantized_nontrainable_weights=False,
         zero_module_granularity_threshold=0,
         log_trace_cache_warnings=False,
+        partition_params_backward=True,
     ):
 
         see_memory_usage("DeepSpeedZeRoOffload initialize [begin]", force=True)
@@ -125,6 +126,7 @@ class DeepSpeedZeRoOffload(object):
         self.zero_quantized_weights = zero_quantized_weights
         self.zero_quantized_nontrainable_weights = zero_quantized_nontrainable_weights
         self.log_trace_cache_warnings = log_trace_cache_warnings
+        self.partition_params_backward = partition_params_backward
 
         if offload_param_config is not None and offload_param_config.device != OffloadDeviceEnum.none:
             self.offload_device = offload_param_config.device
@@ -469,10 +471,12 @@ class DeepSpeedZeRoOffload(object):
         FWD_MODULE_STACK.append(sub_module)
 
         param_coordinator = self.get_param_coordinator()
-        param_coordinator.trace_prologue(sub_module)
-        if param_coordinator.is_record_trace():
-            param_coordinator.record_module(sub_module)
-        param_coordinator.fetch_sub_module(sub_module, forward=True)
+
+        # Conditional fetch for ZeRO-4: skip only if params are already AVAILABLE
+        if (self.partition_params_backward
+                or not all(param.ds_status == ZeroParamStatus.AVAILABLE
+                           for param in iter_params(sub_module, recurse=z3_leaf_module(sub_module)))):
+            param_coordinator.fetch_sub_module(sub_module, forward=True)
 
         if self.zenflow:
             params_to_fetch = set(iter_params(sub_module, recurse=z3_leaf_module(sub_module)))
@@ -525,7 +529,8 @@ class DeepSpeedZeRoOffload(object):
             for param in params_to_fetch:
                 param.data = param.data.t() if len(param.ds_shape) != 1 else param.data
 
-        self.get_param_coordinator().release_sub_module(sub_module, forward=False)
+        if self.partition_params_backward:
+            self.get_param_coordinator().release_sub_module(sub_module, forward=False)
 
         see_memory_usage(
             f"After sub module backward function {sub_module.__class__.__name__} {sub_module.ds_id} after release",

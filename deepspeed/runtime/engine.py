@@ -901,6 +901,13 @@ class DeepSpeedEngine(Module):
     def cpuadam_cores_perc(self):
         return getattr(self._config.zero_config.offload_optimizer, "cpuadam_cores_perc", 0.9)
 
+    def zero_partition_params_backward(self):
+        """Read partition_params_backward from config.
+        True = Standard ZeRO-3 (release params after backward)
+        False = ZeRO-4 (keep params after backward for forward reuse)
+        """
+        return getattr(self._config.zero_config, "partition_params_backward", True)
+
     def zero_sub_group_size(self):
         return self._config.zero_config.sub_group_size
 
@@ -1886,6 +1893,7 @@ class DeepSpeedEngine(Module):
                     log_trace_cache_warnings=self.zero_log_trace_cache_warnings(),
                     enable_sanity_checks=self.is_sanity_checks_enabled(),
                     cpuadam_cores_perc=self.cpuadam_cores_perc(),
+                    partition_params_backward=self.zero_partition_params_backward(),
                 )
 
         else:
