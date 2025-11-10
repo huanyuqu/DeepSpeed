@@ -361,6 +361,12 @@ class DeepSpeedZeroConfig(DeepSpeedConfigModel):
     """
     Configuration for modules that should be treated as ZeRO3 leaf modules.
     """
+    
+
+    partition_params_backward: bool = True
+    """
+    Partition parameters in the backward pass. False: ZeRO4.
+    """
 
     # Validators
     @model_validator(mode="after")

@@ -471,12 +471,10 @@ class DeepSpeedZeRoOffload(object):
         FWD_MODULE_STACK.append(sub_module)
 
         param_coordinator = self.get_param_coordinator()
-
-        # Conditional fetch for ZeRO-4: skip only if params are already AVAILABLE
-        if (self.partition_params_backward
-                or not all(param.ds_status == ZeroParamStatus.AVAILABLE
-                           for param in iter_params(sub_module, recurse=z3_leaf_module(sub_module)))):
-            param_coordinator.fetch_sub_module(sub_module, forward=True)
+        param_coordinator.trace_prologue(sub_module)
+        if param_coordinator.is_record_trace():
+            param_coordinator.record_module(sub_module)
+        param_coordinator.fetch_sub_module(sub_module, forward=True)
 
         if self.zenflow:
             params_to_fetch = set(iter_params(sub_module, recurse=z3_leaf_module(sub_module)))
