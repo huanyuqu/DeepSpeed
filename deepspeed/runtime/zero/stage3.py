@@ -183,6 +183,8 @@ class DeepSpeedZeroOptimizer_Stage3(ZeROOptimizer):
         enable_sanity_checks=False,
         cpuadam_cores_perc=0.8,
         partition_params_backward=True,
+        forward_reduce=False,
+        forward_reduce_bucket_size=1,
     ):
         see_memory_usage("Stage 3 initialize beginning", force=True)
 
@@ -230,8 +232,14 @@ class DeepSpeedZeroOptimizer_Stage3(ZeROOptimizer):
         self.partial_offload = offload_ratio
         self.enable_sanity_checks = enable_sanity_checks
 
-        # If True: ZeRO-3, False: ZeRO-4
+        # If True: ZeRO-3, False: ZeRO-3.5
         self.partition_params_backward = partition_params_backward
+
+        # If True: ZeRO-4
+        self.forward_reduce = forward_reduce
+        self.forward_reduce_bucket_size = forward_reduce_bucket_size
+        self.forward_reduce_bucket_counter = 0
+        self.deferred_ipg_buckets = []
 
         self.create_zenflow_hooks()
         self._initialize_zenflow_stage3_prologue(module, zenflow_config)
@@ -513,25 +521,27 @@ class DeepSpeedZeroOptimizer_Stage3(ZeROOptimizer):
                               model_persistence_threshold, dp_process_group, offload_param_config, mpu,
                               zero_param_parallel_group, zero_quantized_weights, zero_quantized_nontrainable_weights,
                               zero_module_granularity_threshold, log_trace_cache_warnings):
-        return DeepSpeedZeRoOffload(module=module,
-                                    timers=timers,
-                                    ds_config=ds_config,
-                                    zenflow=zenflow,
-                                    overlap_comm=overlap_comm,
-                                    prefetch_bucket_size=prefetch_bucket_size,
-                                    max_reuse_distance=max_reuse_distance,
-                                    max_live_parameters=max_live_parameters,
-                                    param_persistence_threshold=param_persistence_threshold,
-                                    model_persistence_threshold=model_persistence_threshold,
-                                    dp_process_group=dp_process_group,
-                                    offload_param_config=offload_param_config,
-                                    mpu=mpu,
-                                    zero_param_parallel_group=zero_param_parallel_group,
-                                    zero_quantized_weights=zero_quantized_weights,
-                                    zero_quantized_nontrainable_weights=zero_quantized_nontrainable_weights,
-                                    zero_module_granularity_threshold=zero_module_granularity_threshold,
-                                    log_trace_cache_warnings=log_trace_cache_warnings,
-                                    partition_params_backward=self.partition_params_backward)
+        return DeepSpeedZeRoOffload(
+            module=module,
+            timers=timers,
+            ds_config=ds_config,
+            zenflow=zenflow,
+            overlap_comm=overlap_comm,
+            prefetch_bucket_size=prefetch_bucket_size,
+            max_reuse_distance=max_reuse_distance,
+            max_live_parameters=max_live_parameters,
+            param_persistence_threshold=param_persistence_threshold,
+            model_persistence_threshold=model_persistence_threshold,
+            dp_process_group=dp_process_group,
+            offload_param_config=offload_param_config,
+            mpu=mpu,
+            zero_param_parallel_group=zero_param_parallel_group,
+            zero_quantized_weights=zero_quantized_weights,
+            zero_quantized_nontrainable_weights=zero_quantized_nontrainable_weights,
+            zero_module_granularity_threshold=zero_module_granularity_threshold,
+            log_trace_cache_warnings=log_trace_cache_warnings,
+            partition_params_backward=self.partition_params_backward,
+            forward_hook_callback=self.run_deferred_reductions_hook if self.forward_reduce else None)
 
     def _get_trainable_parameter_groups(self):
         param_groups = []
@@ -1016,6 +1026,7 @@ class DeepSpeedZeroOptimizer_Stage3(ZeROOptimizer):
         return sub_groups
 
     def _optimizer_step(self, sub_group_id):
+        self.flush_deferred_buckets()
         param_group_id = self.sub_group_to_group_id[sub_group_id]
         fp32_param = self.fp32_partitioned_groups_flat[sub_group_id]
 
@@ -1289,6 +1300,22 @@ class DeepSpeedZeroOptimizer_Stage3(ZeROOptimizer):
     def get_param_id(self, param):
         return OptimizerSwapper.parameter_id(param)
 
+    def run_deferred_reductions_hook(self, module, input):
+        if self.deferred_ipg_buckets:
+            bucket = self.deferred_ipg_buckets.pop(0)
+            if bucket.params:
+                dtype = self.get_param_comm_dtype(bucket.params[0])
+                self.__reduce_and_partition_ipg_grads(dtype, bucket=bucket)
+
+    def flush_deferred_buckets(self):
+        while self.deferred_ipg_buckets:
+            bucket = self.deferred_ipg_buckets.pop(0)
+            # We need to know the dtype of the bucket.
+            # IPGBucketZ3 doesn't store dtype, but params do.
+            if bucket.params:
+                dtype = self.get_param_comm_dtype(bucket.params[0])
+                self.__reduce_and_partition_ipg_grads(dtype, bucket=bucket)
+
     ###############Independent Partition Gradient ########################
     def reduce_independent_p_g_buckets_and_remove_grads(self, param):
         #print_rank_0(f"Inside reduce ipg buckets. {debug_param2name_id_shape(param)}, ipg elements {self.elements_in_ipg_bucket}, reduce bucket size {self.reduce_bucket_size}", force=True)
@@ -1302,7 +1329,16 @@ class DeepSpeedZeroOptimizer_Stage3(ZeROOptimizer):
         bucket = self.ipg_buckets[comm_dtype]
         if bucket.elements + param.ds_numel > self.reduce_bucket_size and bucket.elements > 0:
             self.report_ipg_memory_usage("In ipg_remove_grads before reduce_ipg_grads", param.ds_numel)
-            self.__reduce_and_partition_ipg_grads(comm_dtype)
+            if self.forward_reduce and not self.is_gradient_accumulation_boundary:
+                self.forward_reduce_bucket_counter += 1
+                if self.forward_reduce_bucket_size > 0 and self.forward_reduce_bucket_counter % self.forward_reduce_bucket_size == 0:
+                    self.__reduce_and_partition_ipg_grads(comm_dtype)
+                else:
+                    self.deferred_ipg_buckets.append(bucket)
+                    # create a new bucket for further reduce
+                    self.ipg_buckets[comm_dtype] = IPGBucketZ3()
+            else:
+                self.__reduce_and_partition_ipg_grads(comm_dtype)
 
         # deal with a use-case of transient grads that will be generated in a loop for the same computation involving some model params - e.g. when performing a tiled memory calculation that shards the normal single sub-module call into a loop over a shards.
         if getattr(param, "ds_grad_is_ready", True):
@@ -1336,8 +1372,12 @@ class DeepSpeedZeroOptimizer_Stage3(ZeROOptimizer):
 
     @instrument_w_nvtx
     @torch.no_grad()
-    def __reduce_and_partition_ipg_grads(self, communication_data_type: torch.dtype) -> None:
-        bucket = self.ipg_buckets[communication_data_type]
+    def __reduce_and_partition_ipg_grads(self,
+                                         communication_data_type: torch.dtype,
+                                         bucket: IPGBucketZ3 = None) -> None:
+        # for deferred reduction, the bucket is passed in
+        if bucket is None:
+            bucket = self.ipg_buckets[communication_data_type]
         params_in_bucket = bucket.params
 
         if not params_in_bucket:
@@ -2332,6 +2372,9 @@ class DeepSpeedZeroOptimizer_Stage3(ZeROOptimizer):
 
         if self.zenflow:
             self.zenflow_backward_prologue()
+
+        if self.forward_reduce:
+            self.forward_reduce_bucket_counter = 0
 
         see_memory_usage("Before backward", force=False)
 

@@ -109,6 +109,7 @@ class DeepSpeedZeRoOffload(object):
         zero_module_granularity_threshold=0,
         log_trace_cache_warnings=False,
         partition_params_backward=True,
+        forward_hook_callback=None,
     ):
 
         see_memory_usage("DeepSpeedZeRoOffload initialize [begin]", force=True)
@@ -127,6 +128,7 @@ class DeepSpeedZeRoOffload(object):
         self.zero_quantized_nontrainable_weights = zero_quantized_nontrainable_weights
         self.log_trace_cache_warnings = log_trace_cache_warnings
         self.partition_params_backward = partition_params_backward
+        self.forward_hook_callback = forward_hook_callback
 
         if offload_param_config is not None and offload_param_config.device != OffloadDeviceEnum.none:
             self.offload_device = offload_param_config.device
@@ -300,6 +302,8 @@ class DeepSpeedZeRoOffload(object):
         @torch.compiler.disable
         def _pre_forward_module_hook(module, *args):
             self.pre_sub_module_forward_function(module)
+            if self.forward_hook_callback:
+                self.forward_hook_callback(module, *args)
 
         @instrument_w_nvtx
         def _post_forward_module_hook(module, input, output):
