@@ -1026,7 +1026,6 @@ class DeepSpeedZeroOptimizer_Stage3(ZeROOptimizer):
         return sub_groups
 
     def _optimizer_step(self, sub_group_id):
-        self.flush_deferred_buckets()
         param_group_id = self.sub_group_to_group_id[sub_group_id]
         fp32_param = self.fp32_partitioned_groups_flat[sub_group_id]
 
@@ -2190,6 +2189,9 @@ class DeepSpeedZeroOptimizer_Stage3(ZeROOptimizer):
         """
             Not supporting closure.
         """
+        if self.forward_reduce:
+            self.flush_deferred_buckets()
+
         self._pre_step()
         self._partition_all_parameters()
 
