@@ -1330,7 +1330,22 @@ class DeepSpeedZeroOptimizer_Stage3(ZeROOptimizer):
             self.report_ipg_memory_usage("In ipg_remove_grads before reduce_ipg_grads", param.ds_numel)
             if self.forward_reduce and not self.is_gradient_accumulation_boundary:
                 self.forward_reduce_bucket_counter += 1
-                if self.forward_reduce_bucket_size > 0 and self.forward_reduce_bucket_counter % self.forward_reduce_bucket_size == 0:
+
+                should_reduce = False
+                if isinstance(self.forward_reduce_bucket_size, int):
+                    # Defer N-1 times, then Reduce
+                    if self.forward_reduce_bucket_size > 0 and self.forward_reduce_bucket_counter % self.forward_reduce_bucket_size == 0:
+                        should_reduce = True
+                elif isinstance(self.forward_reduce_bucket_size, list):
+                    reduce_count = self.forward_reduce_bucket_size[0]
+                    defer_count = self.forward_reduce_bucket_size[1]
+                    cycle_len = reduce_count + defer_count
+                    if cycle_len > 0:
+                        pos = (self.forward_reduce_bucket_counter - 1) % cycle_len
+                        if pos >= defer_count:
+                            should_reduce = True
+
+                if should_reduce:
                     self.__reduce_and_partition_ipg_grads(comm_dtype)
                 else:
                     self.deferred_ipg_buckets.append(bucket)
