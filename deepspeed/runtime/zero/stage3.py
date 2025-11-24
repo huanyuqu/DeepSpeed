@@ -185,6 +185,7 @@ class DeepSpeedZeroOptimizer_Stage3(ZeROOptimizer):
         partition_params_backward=True,
         forward_reduce=False,
         forward_reduce_bucket_size=1,
+        keep_params_available=False,
     ):
         see_memory_usage("Stage 3 initialize beginning", force=True)
 
@@ -240,6 +241,7 @@ class DeepSpeedZeroOptimizer_Stage3(ZeROOptimizer):
         self.forward_reduce_bucket_size = forward_reduce_bucket_size
         self.forward_reduce_bucket_counter = 0
         self.deferred_ipg_buckets = []
+        self.keep_params_available = keep_params_available
 
         self.create_zenflow_hooks()
         self._initialize_zenflow_stage3_prologue(module, zenflow_config)
@@ -541,7 +543,8 @@ class DeepSpeedZeroOptimizer_Stage3(ZeROOptimizer):
             zero_module_granularity_threshold=zero_module_granularity_threshold,
             log_trace_cache_warnings=log_trace_cache_warnings,
             partition_params_backward=self.partition_params_backward,
-            forward_hook_callback=self.run_deferred_reductions_hook if self.forward_reduce else None)
+            forward_hook_callback=self.run_deferred_reductions_hook if self.forward_reduce else None,
+            keep_params_available=self.keep_params_available)
 
     def _get_trainable_parameter_groups(self):
         param_groups = []
@@ -2250,6 +2253,13 @@ class DeepSpeedZeroOptimizer_Stage3(ZeROOptimizer):
 
             #release memory or swap out optimizer states of fp32 parameters
             self._release_sub_group(sub_group_id, timer_names)
+
+        # AllGather parameters to update full weights
+        if self.keep_params_available:
+            for group in self.fp16_groups:
+                for param in group:
+                    param.ds_status = ZeroParamStatus.NOT_AVAILABLE
+                    param.all_gather()
 
         self.timers(OPTIMIZER_STEP_TIMER).stop()
 

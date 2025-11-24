@@ -940,6 +940,9 @@ class DeepSpeedEngine(Module):
     def zero_forward_reduce_bucket_size(self):
         return getattr(self._config.zero_config, "forward_reduce_bucket_size", 1)
 
+    def zero_keep_params_available(self):
+        return getattr(self._config.zero_config, "keep_params_available", False)
+
     def zero_sub_group_size(self):
         return self._config.zero_config.sub_group_size
 
@@ -1934,6 +1937,7 @@ class DeepSpeedEngine(Module):
                     partition_params_backward=self.zero_partition_params_backward(),
                     forward_reduce=self.zero_forward_reduce(),
                     forward_reduce_bucket_size=self.zero_forward_reduce_bucket_size(),
+                    keep_params_available=self.zero_keep_params_available(),
                 )
 
         else:

@@ -49,6 +49,7 @@
     "stage3_max_live_parameters": 1e9,
     "stage3_max_reuse_distance": 1e9,
     "reduce_bucket_size": 5e7,
-    "partition_params_backward": false
+    "partition_params_backward": false,
+    "keep_params_available": true
   }
 }

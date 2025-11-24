@@ -378,6 +378,11 @@ class DeepSpeedZeroConfig(DeepSpeedConfigModel):
     Can be an integer (reduce every Nth bucket) or a list [reduce_count, defer_count].
     """
 
+    keep_params_available: bool = False
+    """
+    Whether to keep full parameters available for ZeRO-3.
+    """
+
     # Validators
     @model_validator(mode="after")
     def overlap_comm_valid(self):

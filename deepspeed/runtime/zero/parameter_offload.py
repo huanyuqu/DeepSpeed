@@ -110,6 +110,7 @@ class DeepSpeedZeRoOffload(object):
         log_trace_cache_warnings=False,
         partition_params_backward=True,
         forward_hook_callback=None,
+        keep_params_available=False,
     ):
 
         see_memory_usage("DeepSpeedZeRoOffload initialize [begin]", force=True)
@@ -129,6 +130,7 @@ class DeepSpeedZeRoOffload(object):
         self.log_trace_cache_warnings = log_trace_cache_warnings
         self.partition_params_backward = partition_params_backward
         self.forward_hook_callback = forward_hook_callback
+        self.keep_params_available = keep_params_available
 
         if offload_param_config is not None and offload_param_config.device != OffloadDeviceEnum.none:
             self.offload_device = offload_param_config.device
@@ -498,8 +500,9 @@ class DeepSpeedZeRoOffload(object):
             for param in params_to_fetch:
                 param.data = param.data.t() if len(param.ds_shape) != 1 else param.data
 
-        param_coordinator = self.get_param_coordinator()
-        param_coordinator.release_sub_module(sub_module, forward=True)
+        if not self.keep_params_available:
+            param_coordinator = self.get_param_coordinator()
+            param_coordinator.release_sub_module(sub_module, forward=True)
 
         see_memory_usage(
             f"After sub module function {sub_module.__class__.__name__}  {sub_module.ds_id} after release",
@@ -531,7 +534,7 @@ class DeepSpeedZeRoOffload(object):
             for param in params_to_fetch:
                 param.data = param.data.t() if len(param.ds_shape) != 1 else param.data
 
-        if self.partition_params_backward:
+        if self.partition_params_backward and not self.keep_params_available:
             self.get_param_coordinator().release_sub_module(sub_module, forward=False)
 
         see_memory_usage(

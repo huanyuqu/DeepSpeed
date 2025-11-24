@@ -124,10 +124,10 @@ def benchmark_config(model_name, config_path, batch_size=2, seq_len=128, steps=3
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--model", type=str, default="examples/Qwen3-0.6B", help="HF model id or path")
-    parser.add_argument("--configs", nargs="+", default=["examples/zero5.json"])
+    parser.add_argument("--configs", nargs="+", default=["examples/zero2.json"])
     parser.add_argument("--offload", action="store_true", help="Whether to use offload configs")
     parser.add_argument("--batch_size", type=int, default=2)
-    parser.add_argument("--seq_len", type=int, default=128)
+    parser.add_argument("--seq_len", type=int, default=512)
     parser.add_argument("--steps", type=int, default=64)
     parser.add_argument("--warmup", type=int, default=5)
     parser.add_argument("--local_rank", type=int, default=-1, help="local rank passed from distributed launcher")
