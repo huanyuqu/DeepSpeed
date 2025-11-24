@@ -934,6 +934,12 @@ class DeepSpeedEngine(Module):
         """
         return getattr(self._config.zero_config, "partition_params_backward", True)
 
+    def zero_forward_reduce(self):
+        return getattr(self._config.zero_config, "forward_reduce", False)
+
+    def zero_forward_reduce_bucket_size(self):
+        return getattr(self._config.zero_config, "forward_reduce_bucket_size", 1)
+
     def zero_sub_group_size(self):
         return self._config.zero_config.sub_group_size
 
@@ -1926,6 +1932,8 @@ class DeepSpeedEngine(Module):
                     enable_sanity_checks=self.is_sanity_checks_enabled(),
                     cpuadam_cores_perc=self.cpuadam_cores_perc(),
                     partition_params_backward=self.zero_partition_params_backward(),
+                    forward_reduce=self.zero_forward_reduce(),
+                    forward_reduce_bucket_size=self.zero_forward_reduce_bucket_size(),
                 )
 
         else:

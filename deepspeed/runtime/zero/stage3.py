@@ -1336,6 +1336,9 @@ class DeepSpeedZeroOptimizer_Stage3(ZeROOptimizer):
                     self.deferred_ipg_buckets.append(bucket)
                     # create a new bucket for further reduce
                     self.ipg_buckets[comm_dtype] = IPGBucketZ3()
+                    if self.contiguous_gradients:
+                        self.ipg_buckets[comm_dtype].buffer = torch.empty(
+                            self.reduce_bucket_size, dtype=comm_dtype, device=get_accelerator().current_device_name())
             else:
                 self.__reduce_and_partition_ipg_grads(comm_dtype)
 
@@ -1839,6 +1842,9 @@ class DeepSpeedZeroOptimizer_Stage3(ZeROOptimizer):
                     if p.grad is not None:
                         p.grad.detach_()
                         p.grad.zero_()
+
+        if self.forward_reduce:
+            self.deferred_ipg_buckets = []
 
     def _model_parallel_all_reduce(self, tensor, op):
         """ Perform all reduce within model parallel group, if any.

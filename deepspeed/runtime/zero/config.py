@@ -361,11 +361,21 @@ class DeepSpeedZeroConfig(DeepSpeedConfigModel):
     """
     Configuration for modules that should be treated as ZeRO3 leaf modules.
     """
-    
 
     partition_params_backward: bool = True
     """
     Partition parameters in the backward pass. False: ZeRO4.
+    """
+
+    forward_reduce: bool = False
+    """
+    Whether to defer gradient reduction to forward. True: ZeRO5.
+    """
+
+    forward_reduce_bucket_size: int | list[int] = Field(1)
+    """
+    Bucket size for deferred gradient reduction in forward pass.
+    Can be an integer (reduce every Nth bucket) or a list [reduce_count, defer_count].
     """
 
     # Validators
