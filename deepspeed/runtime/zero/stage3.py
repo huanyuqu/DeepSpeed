@@ -2254,13 +2254,6 @@ class DeepSpeedZeroOptimizer_Stage3(ZeROOptimizer):
             #release memory or swap out optimizer states of fp32 parameters
             self._release_sub_group(sub_group_id, timer_names)
 
-        # AllGather parameters to update full weights
-        if self.keep_params_available:
-            for group in self.fp16_groups:
-                for param in group:
-                    param.ds_status = ZeroParamStatus.NOT_AVAILABLE
-                    param.all_gather()
-
         self.timers(OPTIMIZER_STEP_TIMER).stop()
 
         self._post_step(timer_names)
