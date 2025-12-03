@@ -257,11 +257,16 @@ class DeepSpeedZeRoOffload(object):
         def _start_of_forward_hook(module, *args):
 
             self.get_param_coordinator().reset_step()
+            if not self.partition_params_backward:
+                for param in iter_params(module, recurse=True):
+                    param.ds_active_sub_modules.clear()
 
         self.fwd_pre_hook = self.module.register_forward_pre_hook(_start_of_forward_hook)
 
         #likely one of them should be enough but just to be safe
-        self._register_deepspeed_module(self.module)
+        count = [0]
+        self._register_deepspeed_module(self.module, count=count)
+        self.num_modules = count[0] + 1
 
         # Add top module to stack trace
         global FWD_MODULE_STACK
@@ -502,7 +507,8 @@ class DeepSpeedZeRoOffload(object):
 
         if not self.keep_params_available:
             param_coordinator = self.get_param_coordinator()
-            param_coordinator.release_sub_module(sub_module, forward=True)
+            force_release = not self.partition_params_backward
+            param_coordinator.release_sub_module(sub_module, forward=True, force_release=force_release)
 
         see_memory_usage(
             f"After sub module function {sub_module.__class__.__name__}  {sub_module.ds_id} after release",

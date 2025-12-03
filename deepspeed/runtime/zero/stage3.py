@@ -240,6 +240,8 @@ class DeepSpeedZeroOptimizer_Stage3(ZeROOptimizer):
         self.forward_reduce = forward_reduce
         self.forward_reduce_bucket_size = forward_reduce_bucket_size
         self.forward_reduce_bucket_counter = 0
+        self.forward_hook_bucket_counter = 0
+        self.forward_reduce_interval = 0
         self.deferred_ipg_buckets = []
         self.keep_params_available = keep_params_available
 
@@ -1304,10 +1306,24 @@ class DeepSpeedZeroOptimizer_Stage3(ZeROOptimizer):
 
     def run_deferred_reductions_hook(self, module, input):
         if self.deferred_ipg_buckets:
-            bucket = self.deferred_ipg_buckets.pop(0)
-            if bucket.params:
-                dtype = self.get_param_comm_dtype(bucket.params[0])
-                self.__reduce_and_partition_ipg_grads(dtype, bucket=bucket)
+            if self.forward_hook_bucket_counter == 0:
+                total_modules = self.parameter_offload.num_modules
+                num_buckets = len(self.deferred_ipg_buckets)
+                if num_buckets > 0:
+                    self.forward_reduce_interval = max(1, total_modules // num_buckets)
+
+            should_reduce = False
+            if self.forward_reduce_interval > 0:
+                if self.forward_hook_bucket_counter % self.forward_reduce_interval == 0:
+                    should_reduce = True
+
+            self.forward_hook_bucket_counter += 1
+
+            if should_reduce:
+                bucket = self.deferred_ipg_buckets.pop(0)
+                if bucket.params:
+                    dtype = self.get_param_comm_dtype(bucket.params[0])
+                    self.__reduce_and_partition_ipg_grads(dtype, bucket=bucket)
 
     def flush_deferred_buckets(self):
         while self.deferred_ipg_buckets:
@@ -2401,6 +2417,7 @@ class DeepSpeedZeroOptimizer_Stage3(ZeROOptimizer):
 
         if self.forward_reduce:
             self.forward_reduce_bucket_counter = 0
+            self.forward_hook_bucket_counter = 0
 
         see_memory_usage("Before backward", force=False)
 

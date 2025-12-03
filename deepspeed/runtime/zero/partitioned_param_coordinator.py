@@ -422,12 +422,16 @@ class PartitionedParameterCoordinator:
 
     @instrument_w_nvtx
     @torch.no_grad()
-    def release_sub_module(self, submodule: Module, forward=False) -> None:
+    def release_sub_module(self, submodule: Module, forward=False, force_release=False) -> None:
         """release the parameters of a sub module, assuming they meet conditions to
         be released."""
         #print_rank_0(f"release_sub_module {'fwd' if forward else 'bwd'}: {debug_module2name_id(submodule)}", force=False)
-        params_to_release = (self.__params_to_release(submodule, self.__step_id) if self.is_complete_trace() else set(
-            p.ds_id for p in iter_params(submodule, recurse=z3_leaf_module(submodule))))
+        if force_release:
+            params_to_release = set(p.ds_id for p in iter_params(submodule, recurse=z3_leaf_module(submodule))
+                                    if not p.ds_persist)
+        else:
+            params_to_release = (self.__params_to_release(submodule, self.__step_id) if self.is_complete_trace() else
+                                 set(p.ds_id for p in iter_params(submodule, recurse=z3_leaf_module(submodule))))
 
         free_data = not z3_leaf_module(submodule) or not self.fast_sharding_for_leaf_module
         if not free_data:
@@ -457,7 +461,7 @@ class PartitionedParameterCoordinator:
             self.__release_param(param)
 
         for param in iter_params(module, recurse=True):
-            if param.ds_status != ZeroParamStatus.NOT_AVAILABLE:
+            if param.ds_status != ZeroParamStatus.NOT_AVAILABLE and not param.ds_persist:
                 raise RuntimeError(f"{param.ds_summary()} expected to be released")
 
     @instrument_w_nvtx

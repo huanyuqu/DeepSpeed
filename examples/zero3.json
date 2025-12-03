@@ -1,8 +1,8 @@
 {
   "train_batch_size": 64,
-  "train_micro_batch_size_per_gpu": 2,
+  "train_micro_batch_size_per_gpu": 1,
   "gradient_accumulation_steps": 16,
-  "steps_per_print": 10,
+  "steps_per_print": 1,
 
   "optimizer": {
     "type": "AdamW",
@@ -35,12 +35,14 @@
     "stage": 3,
     "overlap_comm": true,
     "contiguous_gradients": true,
-    "sub_group_size": 1e9,
-    "stage3_prefetch_bucket_size": "auto",
-    "stage3_param_persistence_threshold": "auto",
-    "stage3_max_live_parameters": 1e9,
-    "stage3_max_reuse_distance": 1e9,
-    "reduce_bucket_size": 5e8,
-    "partition_params_backward": true
+    "sub_group_size": 1e7,
+    "stage3_prefetch_bucket_size": 1e7,
+    "stage3_param_persistence_threshold": 1e5,
+    "stage3_max_live_parameters": 1e7,
+    "stage3_max_reuse_distance": 1e6,
+    "reduce_bucket_size": 1e7,
+    "partition_params_backward": false,
+    "forward_reduce": true,
+    "forward_reduce_bucket_size": 2
   }
 }
