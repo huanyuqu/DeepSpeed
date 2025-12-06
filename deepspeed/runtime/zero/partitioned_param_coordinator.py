@@ -461,7 +461,7 @@ class PartitionedParameterCoordinator:
             self.__release_param(param)
 
         for param in iter_params(module, recurse=True):
-            if param.ds_status != ZeroParamStatus.NOT_AVAILABLE and not param.ds_persist:
+            if param.ds_status != ZeroParamStatus.NOT_AVAILABLE:
                 raise RuntimeError(f"{param.ds_summary()} expected to be released")
 
     @instrument_w_nvtx

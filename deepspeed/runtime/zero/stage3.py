@@ -183,6 +183,7 @@ class DeepSpeedZeroOptimizer_Stage3(ZeROOptimizer):
         enable_sanity_checks=False,
         cpuadam_cores_perc=0.8,
         partition_params_backward=True,
+        num_persistent_layers=None,
         forward_reduce=False,
         forward_reduce_bucket_size=1,
         keep_params_available=False,
@@ -235,6 +236,8 @@ class DeepSpeedZeroOptimizer_Stage3(ZeROOptimizer):
 
         # If True: ZeRO-3, False: ZeRO-3.5
         self.partition_params_backward = partition_params_backward
+        # Fine-grained control over which layers keep params persistent
+        self.num_persistent_layers = num_persistent_layers
 
         # If True: ZeRO-4
         self.forward_reduce = forward_reduce
@@ -545,6 +548,7 @@ class DeepSpeedZeroOptimizer_Stage3(ZeROOptimizer):
             zero_module_granularity_threshold=zero_module_granularity_threshold,
             log_trace_cache_warnings=log_trace_cache_warnings,
             partition_params_backward=self.partition_params_backward,
+            num_persistent_layers=self.num_persistent_layers,
             forward_hook_callback=self.run_deferred_reductions_hook if self.forward_reduce else None,
             keep_params_available=self.keep_params_available)
 

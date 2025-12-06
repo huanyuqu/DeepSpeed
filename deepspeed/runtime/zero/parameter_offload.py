@@ -109,6 +109,7 @@ class DeepSpeedZeRoOffload(object):
         zero_module_granularity_threshold=0,
         log_trace_cache_warnings=False,
         partition_params_backward=True,
+        num_persistent_layers=None,
         forward_hook_callback=None,
         keep_params_available=False,
     ):
@@ -129,6 +130,16 @@ class DeepSpeedZeRoOffload(object):
         self.zero_quantized_nontrainable_weights = zero_quantized_nontrainable_weights
         self.log_trace_cache_warnings = log_trace_cache_warnings
         self.partition_params_backward = partition_params_backward
+        self.num_persistent_layers = num_persistent_layers
+        self.persistent_layer_pattern = None
+        if self.num_persistent_layers is not None:
+            if isinstance(self.num_persistent_layers, int):
+                self.persistent_layer_pattern = (self.num_persistent_layers - 1, 1)
+            elif isinstance(self.num_persistent_layers, (tuple, list)) and len(self.num_persistent_layers) == 2:
+                self.persistent_layer_pattern = tuple(self.num_persistent_layers)
+            else:
+                raise ValueError("num_persistent_layers should be either an int or a tuple of two ints.")
+        self.persistent_layer_counter = 0
         self.forward_hook_callback = forward_hook_callback
         self.keep_params_available = keep_params_available
 
@@ -257,6 +268,7 @@ class DeepSpeedZeRoOffload(object):
         def _start_of_forward_hook(module, *args):
 
             self.get_param_coordinator().reset_step()
+            self.persistent_layer_counter = 0
             if not self.partition_params_backward:
                 for param in iter_params(module, recurse=True):
                     param.ds_active_sub_modules.clear()
@@ -494,6 +506,33 @@ class DeepSpeedZeRoOffload(object):
 
         see_memory_usage(f"Before sub module function {sub_module.__class__.__name__} after fetch", force=False)
 
+    def should_keep_persistent(self, module):
+        if self.persistent_layer_pattern is None:
+            return True
+
+        # Only count leaf modules or modules with direct parameters
+        is_leaf = z3_leaf_module(module)
+        has_direct_params = False
+        if not is_leaf:
+            for param in module.parameters(recurse=False):
+                if is_zero_param(param):
+                    has_direct_params = True
+                    break
+
+        if not is_leaf and not has_direct_params:
+            return True
+
+        keep, release = self.persistent_layer_pattern
+        cycle = keep + release
+        if cycle == 0:
+            return True
+
+        idx = self.persistent_layer_counter
+        self.persistent_layer_counter += 1
+        should_keep = (idx % cycle) < keep
+
+        return should_keep
+
     @torch.no_grad()
     def post_sub_module_forward_function(self, sub_module):
         see_memory_usage(
@@ -540,8 +579,12 @@ class DeepSpeedZeRoOffload(object):
             for param in params_to_fetch:
                 param.data = param.data.t() if len(param.ds_shape) != 1 else param.data
 
-        if self.partition_params_backward and not self.keep_params_available:
-            self.get_param_coordinator().release_sub_module(sub_module, forward=False)
+        if not self.keep_params_available:
+            if self.partition_params_backward:
+                self.get_param_coordinator().release_sub_module(sub_module, forward=False)
+            else:
+                if not self.should_keep_persistent(sub_module):
+                    self.get_param_coordinator().release_sub_module(sub_module, forward=False)
 
         see_memory_usage(
             f"After sub module backward function {sub_module.__class__.__name__} {sub_module.ds_id} after release",

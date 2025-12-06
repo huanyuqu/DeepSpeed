@@ -1305,7 +1305,6 @@ class Init(InsertPostInitMethodToModuleSubClasses):
                 # ensure that tensors from each rank agree on the same ds_numel
                 # otherwise could mix data between tensors.
                 assert_ints_same_as_other_ranks([p.ds_tensor.ds_numel for p in params])
-
             if len(params) == 1:
                 # have an opportunity to avoid some intermediate memory allocations
                 param = params[0]
@@ -1379,7 +1378,6 @@ class Init(InsertPostInitMethodToModuleSubClasses):
                     quant_info.quant_handle = quant_handle
                     quant_info.scale_buffer = quant_scale_buffer
                     return AllGatherHandle(handle, param, quantization=quant_info)
-
             else:
                 if self.use_all_reduce_for_fetch_params and not quantize and not use_secondary_tensor:
 

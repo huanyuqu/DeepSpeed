@@ -140,7 +140,10 @@ def isinstance_namedtuple(obj: object) -> bool:
 def is_zero_param(parameter):
     if not torch.is_tensor(parameter):
         return False
-    return hasattr(parameter, 'ds_id')
+    try:
+        return 'ds_id' in parameter.__dict__
+    except AttributeError:
+        return False
 
 
 def apply_to_tensors_only(function, value, warning_msg_fn=None):

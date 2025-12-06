@@ -367,6 +367,11 @@ class DeepSpeedZeroConfig(DeepSpeedConfigModel):
     Partition parameters in the backward pass. False: ZeRO4.
     """
 
+    num_persistent_layers: int | tuple[int, int] | None = None
+    """
+    Number of submodules to keep parameters persistent (not released) after backward.
+    """
+
     forward_reduce: bool = False
     """
     Whether to defer gradient reduction to forward. True: ZeRO5.
