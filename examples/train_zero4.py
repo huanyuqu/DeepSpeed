@@ -14,18 +14,22 @@ from torch.utils.data import DataLoader, TensorDataset
 import deepspeed
 from deepspeed.accelerator import get_accelerator
 from transformers import AutoModelForCausalLM, AutoTokenizer, AutoConfig
+from liger_kernel.transformers import apply_liger_kernel_to_qwen3
 
+apply_liger_kernel_to_qwen3()
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
 
 def benchmark_config(model_name,
                      config_path,
+                     level,
                      batch_size=2,
                      seq_len=128,
                      steps=30,
                      warmup=5,
                      local_rank=None,
-                     memory_snapshot=False):
+                     memory_snapshot=False,
+                     profile=False):
     if local_rank == 0:
         print(f"\n=== Benchmarking {config_path} ===")
 
@@ -44,8 +48,13 @@ def benchmark_config(model_name,
             model = AutoModelForCausalLM.from_config(config=config, trust_remote_code=True, dtype=torch.float16)
     else:
         model = AutoModelForCausalLM.from_pretrained(model_name, trust_remote_code=True, dtype=torch.float16)
+
     if local_rank == 0:
         print("Initialization completed")
+
+    model.gradient_checkpointing_enable()
+    if local_rank == 0:
+        print("Recomputation enabled")
 
     # simple synthetic dataset
     texts = ["Hello world"] * (batch_size * (steps + warmup))
@@ -96,14 +105,43 @@ def benchmark_config(model_name,
     times = []
     total_tokens = 0
 
-    with torch.profiler.profile(activities=[
-            torch.profiler.ProfilerActivity.CPU,
-            torch.profiler.ProfilerActivity.CUDA,
-    ],
-                                schedule=torch.profiler.schedule(wait=1, warmup=1, active=2, repeat=1),
-                                on_trace_ready=lambda prof: prof.export_chrome_trace(
-                                    f'examples/trace_zero4_rank{local_rank}_{int(time.time())}.json'),
-                                with_stack=True) as prof:
+    if profile:
+        with torch.profiler.profile(activities=[
+                torch.profiler.ProfilerActivity.CPU,
+                torch.profiler.ProfilerActivity.CUDA,
+        ],
+                                    schedule=torch.profiler.schedule(wait=1, warmup=1, active=1, repeat=1),
+                                    on_trace_ready=lambda prof: prof.export_chrome_trace(
+                                        f'examples/trace_zero{level}_rank{local_rank}_{int(time.time())}.json'),
+                                    with_stack=True) as prof:
+            for i in range(steps):
+                batch_input_ids, batch_attention_mask, batch_labels = next(it)
+                batch_input_ids = batch_input_ids.to(device)
+                batch_attention_mask = batch_attention_mask.to(device)
+                batch_labels = batch_labels.to(device)
+
+                get_accelerator().synchronize(device)
+                t0 = time.perf_counter()
+
+                outputs = model_engine(input_ids=batch_input_ids,
+                                       attention_mask=batch_attention_mask,
+                                       labels=batch_labels)
+                loss = outputs.loss if hasattr(outputs, "loss") else outputs[0]
+                model_engine.backward(loss)
+                model_engine.step()
+
+                get_accelerator().synchronize(device)
+                t1 = time.perf_counter()
+                step_time = t1 - t0
+                times.append(step_time)
+                total_tokens += batch_input_ids.numel()  # batch_size * seq_len
+
+                # if (i + 1) % 10 == 0 or i == 0:
+                if local_rank == 0:
+                    print(f"  step {i+1}/{steps}, loss={loss.item():.4f}, step_time={step_time:.4f}s")
+
+                prof.step()
+    else:
         for i in range(steps):
             batch_input_ids, batch_attention_mask, batch_labels = next(it)
             batch_input_ids = batch_input_ids.to(device)
@@ -128,8 +166,6 @@ def benchmark_config(model_name,
             if local_rank == 0:
                 print(f"  step {i+1}/{steps}, loss={loss.item():.4f}, step_time={step_time:.4f}s")
 
-            prof.step()
-
     avg_time = sum(times) / len(times)
     throughput = total_tokens / sum(times)  # tokens / sec
     peak_mem = None
@@ -146,7 +182,8 @@ def benchmark_config(model_name,
     get_accelerator().empty_cache()
     if local_rank == 0:
         if memory_snapshot:
-            torch.cuda.memory._dump_snapshot(f"examples/memory_snapshot_zero4_{int(time.time())}.pickle")  #ignore-cuda
+            torch.cuda.memory._dump_snapshot(  #ignore-cuda
+                f"examples/memory_snapshot_zero{level}_{int(time.time())}.pickle")  #ignore-cuda
 
     # Ensure all ranks reach this point before destroying the process group
     if deepspeed.comm.is_initialized():
@@ -166,12 +203,13 @@ def main():
     parser.add_argument("--model", type=str, default="examples/Qwen3-4B", help="HF model id or path")
     parser.add_argument("--configs", nargs="+", default=["examples/zero3.json"])
     parser.add_argument("--offload", action="store_true", help="Whether to use offload configs")
-    parser.add_argument("--batch_size", type=int, default=1)
-    parser.add_argument("--seq_len", type=int, default=2048)
-    parser.add_argument("--steps", type=int, default=32)
-    parser.add_argument("--warmup", type=int, default=5)
+    parser.add_argument("--batch_size", type=int, default=4)
+    parser.add_argument("--seq_len", type=int, default=4096)
+    parser.add_argument("--steps", type=int, default=16)
+    parser.add_argument("--warmup", type=int, default=3)
     parser.add_argument("--local_rank", type=int, default=-1, help="local rank passed from distributed launcher")
     parser.add_argument("--memory_snapshot", action="store_true", help="Whether to save memory snapshot")
+    parser.add_argument("--profile", action="store_true", help="Whether to use torch profiler")
     args = parser.parse_args()
 
     if args.offload:
@@ -181,12 +219,14 @@ def main():
     for cfg in args.configs:
         res = benchmark_config(model_name=args.model,
                                config_path=cfg,
+                               level=3,
                                batch_size=args.batch_size,
                                seq_len=args.seq_len,
                                steps=args.steps,
                                warmup=args.warmup,
                                local_rank=args.local_rank,
-                               memory_snapshot=args.memory_snapshot)
+                               memory_snapshot=args.memory_snapshot,
+                               profile=args.profile)
         results.append(res)
 
     print("\n=== Summary ===")
