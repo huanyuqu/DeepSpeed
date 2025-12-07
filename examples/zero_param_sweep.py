@@ -318,7 +318,7 @@ def run_single_experiment(model_name: str,
     get_accelerator().empty_cache()
 
     if local_rank == 0 and memory_snapshot:
-        snapshot_path = f"{profile_dir}/memory_snapshot_zero{exp_config.strategy}_{int(time.time())}.pickle"
+        snapshot_path = f"{profile_dir}/memory_snapshot_zero{exp_config.strategy}_batch{exp_config.batch_size}_seq{exp_config.seq_len}_param{exp_config.num_persistent_layers or exp_config.forward_reduce_bucket_size}_{int(time.time())}.pickle"
         torch.cuda.memory._dump_snapshot(snapshot_path)  #ignore-cuda
         print(f"\nMemory snapshot saved to: {snapshot_path}")
 
