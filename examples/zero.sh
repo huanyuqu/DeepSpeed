@@ -44,6 +44,10 @@ export PATH="/usr/local/cuda/bin:$PATH"
 
 eval "$(conda shell.bash hook)"
 
+if [ ! -d "/root/.triton/autotune" ]; then
+    mkdir -p "/root/.triton/autotune"
+fi
+
 if ! conda activate /root/highspeedstorage/ZeRO/envs/zero; then
     echo "Failed to activate /root/highspeedstorage/ZeRO/envs/zero, trying zero..."
     if ! conda activate zero; then
